@@ -284,7 +284,9 @@ uninstall_all() {
 
   rm -rf "$INSTALL_DIR"
 
-  green "✔ Chatwoot 已彻底卸载"
+  green "✔ Chatwoot 已彻底卸载，脚本将退出。"
+
+  exit 0
 }
 
 ########################################
