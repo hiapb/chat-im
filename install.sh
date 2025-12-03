@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 
-# Chatwoot 一键管理脚本（完整版 v4.0）
+# hia Chatwoot 一键管理脚本 v4.5
 # 自动安装 Docker、Compose、OpenSSL
-# 支持安装/更新、重启、状态查看、彻底卸载（y/N）
-# 优化输出符号（⚡ 提示 ✔ 成功 ✖ 错误 ⚠ 警告）
 
 set -e
 
 INSTALL_DIR="/root/data/chatwoot"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
-DOCKER_COMPOSE_CMD="docker compose"  # 自动检测
+DOCKER_COMPOSE_CMD="docker compose"
 
 ########################################
 # 彩色输出
@@ -19,6 +17,7 @@ DOCKER_COMPOSE_CMD="docker compose"  # 自动检测
 green() { printf "\033[32m%s\033[0m\n" "$*"; }
 red()   { printf "\033[31m%s\033[0m\n" "$*"; }
 yellow(){ printf "\033[33m%s\033[0m\n" "$*"; }
+blue()  { printf "\033[36m%s\033[0m\n" "$*"; }
 
 rand_pw() {
   openssl rand -base64 24 2>/dev/null | tr -d '=+/' | cut -c1-24
@@ -26,7 +25,7 @@ rand_pw() {
 
 check_root() {
   if [ "$EUID" -ne 0 ]; then
-    red "✖ 必须使用 root 权限运行此脚本。"
+    red "✖ 必须使用 root 权限运行此脚本"
     exit 1
   fi
 }
@@ -36,11 +35,7 @@ check_root() {
 ########################################
 
 detect_os() {
-  if [ -f /etc/os-release ]; then
-    . /etc/os-release
-  else
-    ID="unknown"
-  fi
+  [ -f /etc/os-release ] && . /etc/os-release || ID="unknown"
 }
 
 install_pkg() {
@@ -52,16 +47,14 @@ install_pkg() {
   elif command -v dnf >/dev/null 2>&1; then
     dnf install -y "$pkg"
   else
-    yellow "⚠ 无法自动安装 $pkg，请手动安装。"
+    yellow "⚠ 系统不支持自动安装 $pkg，请手动安装"
   fi
 }
 
 install_docker() {
-  if command -v docker >/dev/null 2>&1; then
-    return
-  fi
+  if command -v docker >/dev/null 2>&1; then return; fi
 
-  yellow "⚡ 未检测到 Docker，正在安装..."
+  blue "🔧 未检测到 Docker，正在安装..."
   command -v curl >/dev/null 2>&1 || install_pkg curl
   curl -fsSL https://get.docker.com | sh
   systemctl enable --now docker || true
@@ -80,13 +73,13 @@ ensure_docker_compose() {
     return
   fi
 
-  yellow "⚡ 未检测到 docker compose，安装中..."
+  blue "🔧 未检测到 docker compose，正在安装..."
   local URL="https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-$(uname -s)-$(uname -m)"
   curl -L "$URL" -o /usr/local/bin/docker-compose
   chmod +x /usr/local/bin/docker-compose
-  DOCKER_COMPOSE_CMD="docker-compose"
 
   command -v docker-compose >/dev/null 2>&1 || { red "✖ docker-compose 安装失败"; exit 1; }
+  DOCKER_COMPOSE_CMD="docker-compose"
   green "✔ docker-compose 安装完成"
 }
 
@@ -102,27 +95,31 @@ ensure_dependencies() {
 }
 
 ########################################
-# 创建配置
+# 创建配置文件
 ########################################
 
 create_env() {
   mkdir -p "$INSTALL_DIR"
 
-  read -rp "⚡ 输入 Chatwoot 域名（默认 chat.inim.im）：" DOMAIN
-  DOMAIN=${DOMAIN:-chat.inim.im}
+  # 🌍 域名必须输入，不能为空
+  while true; do
+    read -rp "🌍 请输入 Chatwoot 域名（例如：chat.example.com）： " DOMAIN
+    [[ -n "$DOMAIN" ]] && break
+    red "✖ 域名不能为空，请重新输入"
+  done
 
-  read -rp "⚡ 输入端口（默认 6698）：" PORT
+  read -rp "📦 请输入端口（默认 6698）： " PORT
   PORT=${PORT:-6698}
 
   DEFAULT_PG_PASS=$(rand_pw)
-  read -rp "⚡ PostgreSQL 密码（回车随机生成）：" PG_PASS
+  read -rp "🔒 PostgreSQL 密码（回车随机生成）： " PG_PASS
   PG_PASS=${PG_PASS:-$DEFAULT_PG_PASS}
 
   DEFAULT_REDIS_PASS=$(rand_pw)
-  read -rp "⚡ Redis 密码（回车随机生成）：" REDIS_PASS
+  read -rp "🔒 Redis 密码（回车随机生成）： " REDIS_PASS
   REDIS_PASS=${REDIS_PASS:-$DEFAULT_REDIS_PASS}
 
-  read -rp "⚡ SECRET_KEY_BASE（回车自动生成）：" SECRET_KEY_BASE
+  read -rp "🔑 SECRET_KEY_BASE（回车自动生成）： " SECRET_KEY_BASE
   SECRET_KEY_BASE=${SECRET_KEY_BASE:-$(openssl rand -hex 64)}
 
 cat > "$ENV_FILE" <<EOF
@@ -143,8 +140,12 @@ EOF
   echo "$PORT" > "$INSTALL_DIR/.port"
   echo "$DOMAIN" > "$INSTALL_DIR/.domain"
 
-  green "✔ .env 已生成"
+  green "✔ .env 配置文件创建成功"
 }
+
+########################################
+# 创建 docker-compose
+########################################
 
 create_compose() {
   PORT=$(cat "$INSTALL_DIR/.port")
@@ -193,7 +194,7 @@ services:
       bundle exec sidekiq -C config/sidekiq.yml
 EOF
 
-  green "✔ docker-compose.yml 已生成"
+  green "✔ docker-compose.yml 生成完成"
 }
 
 ########################################
@@ -210,7 +211,6 @@ install_or_update() {
 
   if [ ! -d "$INSTALL_DIR/data/postgres" ]; then
     mkdir -p "$INSTALL_DIR/data/postgres"
-    $DOCKER_COMPOSE_CMD down || true
     $DOCKER_COMPOSE_CMD run --rm chatwoot bundle exec rails db:chatwoot_prepare
   fi
 
@@ -220,18 +220,18 @@ install_or_update() {
   DOMAIN=$(cat "$INSTALL_DIR/.domain")
   IP=$(hostname -I | awk '{print $1}')
 
-  green "✔ Chatwoot 已启动"
-  echo "⚡ 本机访问：http://${IP}:${PORT}"
-  echo "⚡ 域名访问：https://${DOMAIN}"
+  green "✔ Chatwoot 已成功启动"
+  echo "🌍 服务器访问地址：http://${IP}:${PORT}"
+  echo "🔗 反代后域名访问：https://${DOMAIN}"
 }
 
 ########################################
-# 状态
+# 查看状态
 ########################################
 
 show_status() {
   if [ ! -d "$INSTALL_DIR" ]; then
-    red "✖ 未检测到安装目录"
+    red "✖ Chatwoot 未安装"
     return
   fi
   cd "$INSTALL_DIR"
@@ -240,34 +240,34 @@ show_status() {
 }
 
 ########################################
-# 重启
+# 重启服务
 ########################################
 
 restart_service() {
   if [ ! -d "$INSTALL_DIR" ]; then
-    red "✖ 未检测到安装目录"
+    red "✖ Chatwoot 未安装"
     return
   fi
   cd "$INSTALL_DIR"
   ensure_dependencies
   $DOCKER_COMPOSE_CMD down
   $DOCKER_COMPOSE_CMD up -d
-  green "✔ Chatwoot 已重启"
+  green "✔ Chatwoot 服务已重启"
 }
 
 ########################################
-# 卸载
+# 卸载 Chatwoot
 ########################################
 
 uninstall_all() {
   if [ ! -d "$INSTALL_DIR" ]; then
-    red "✖ 未检测到安装目录"
+    red "✖ Chatwoot 未安装"
     return
   fi
 
-  echo
-  yellow "⚠ 卸载将删除所有 Chatwoot 数据、容器、镜像"
-  read -rp "⚡ 确认卸载 Chatwoot？[y/N]：" CONFIRM
+  yellow "⚠ 卸载将删除 Chatwoot 所有数据、容器、镜像！"
+  read -rp "❓ 确认卸载 Chatwoot？[y/N]：" CONFIRM
+
   case "$CONFIRM" in
     y|Y) ;;
     *) yellow "⚠ 已取消卸载"; return ;;
@@ -279,9 +279,7 @@ uninstall_all() {
   $DOCKER_COMPOSE_CMD down --rmi all --volumes --remove-orphans || true
 
   docker rm -f chatwoot-chatwoot-1 chatwoot-sidekiq-1 chatwoot-postgres-1 chatwoot-redis-1 2>/dev/null || true
-
   docker rmi -f chatwoot/chatwoot:latest pgvector/pgvector:pg16 redis:6.2 2>/dev/null || true
-
   docker network rm chatwoot_default 2>/dev/null || true
 
   rm -rf "$INSTALL_DIR"
@@ -290,26 +288,27 @@ uninstall_all() {
 }
 
 ########################################
-# 菜单
+# 菜单系统
 ########################################
 
 show_menu() {
   while true; do
     echo
-    green "====== Chatwoot 管理菜单 ======"
-    echo "1) 安装 Chatwoot"
-    echo "2) 查看状态"
-    echo "3) 重启服务"
-    echo "4) 卸载 Chatwoot"
-    echo "5) 退出"
-    read -rp "请选择 [1-5]：" CHOICE
+    green "========= Chatwoot 管理菜单 ========="
+    echo "1) 🌍 安装 Chatwoot"
+    echo "2) 📊 查看状态"
+    echo "3) 🔄 重启服务"
+    echo "4) 🧹 卸载 Chatwoot"
+    echo "5) ❌ 退出"
+    read -rp "请选择 [1-5]： " CHOICE
+
     case "$CHOICE" in
       1) install_or_update ;;
       2) show_status ;;
       3) restart_service ;;
       4) uninstall_all ;;
       5) exit 0 ;;
-      *) yellow "⚠ 无效选项，请重新输入。" ;;
+      *) yellow "⚠ 无效选择，请重试" ;;
     esac
   done
 }
