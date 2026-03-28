@@ -3,7 +3,7 @@
 # hia Chatwoot 一键管理脚本 v5.0
 # 自动安装 Docker、Compose、OpenSSL
 # 深度集成：平滑更新、零宕机热备、跨机恢复、独立定时器与 FTP 异地链路
-# 已追加：永久关闭 widget 相关 Rack::Attack 限制
+# 已追加：永久关闭 widget 相关 Rack::Attack 限制、一键跳过客服邮箱验证
 
 set -e
 
@@ -492,6 +492,74 @@ EOF
   green "✔ 新的定时任务已成功添加。"
 }
 
+########################################
+# 强制跳过客服邮箱验证 (新功能)
+########################################
+
+skip_user_verification() {
+  if [ ! -d "$INSTALL_DIR" ]; then
+    red "✖ 未检测到 Chatwoot 安装目录，请先安装并启动服务。"
+    return
+  fi
+  cd "$INSTALL_DIR" || return
+
+  blue "== 强制跳过客服邮箱验证 =="
+  yellow "提示：请确保你已经先在 Chatwoot 后台【添加客服】界面中输入了该邮箱。"
+  read -rp "📧 请输入需要激活的客服邮箱: " TARGET_EMAIL
+  if [[ -z "$TARGET_EMAIL" ]]; then
+    red "✖ 邮箱不能为空"
+    return
+  fi
+
+  read -rp "🔑 请为该账号设置一个初始登录密码 (最少6位): " NEW_PASSWORD
+  if [[ -z "$NEW_PASSWORD" ]]; then
+    red "✖ 密码不能为空"
+    return
+  fi
+
+  blue "⏳ 正在连接底层容器执行强行认证，请稍候 (约需10-20秒)..."
+
+  # 利用 rails runner 将 Ruby 脚本注入容器执行
+  $DOCKER_COMPOSE_CMD exec -T chatwoot bundle exec rails runner "
+  begin
+    user = User.find_by(email: '${TARGET_EMAIL}')
+    if user
+      user.skip_confirmation!
+      user.password = '${NEW_PASSWORD}'
+      user.password_confirmation = '${NEW_PASSWORD}'
+      if user.save
+        puts '====_SUCCESS_===='
+      else
+        puts '====_SAVE_ERROR_===='
+      end
+    else
+      puts '====_NOT_FOUND_===='
+    end
+  rescue => e
+    puts '====_EXCEPTION_===='
+  end
+  " > tmp_result.txt 2>&1
+
+  if grep -q '====_SUCCESS_====' tmp_result.txt; then
+    echo -e "\n"
+    green "✅ 操作成功！"
+    green "👤 账号：${TARGET_EMAIL}"
+    green "🔑 密码：${NEW_PASSWORD}"
+    green "👉 该客服状态已强制更新为【已认证】，现在你可以使用上述密码直接登录了！"
+  elif grep -q '====_NOT_FOUND_====' tmp_result.txt; then
+    red "✖ 未在数据库中找到邮箱为 [${TARGET_EMAIL}] 的用户！"
+    yellow "请先前往 Chatwoot 网页后台，通过【设置 -> 客服 -> 添加客服】将此邮箱录入系统。"
+  elif grep -q '====_SAVE_ERROR_====' tmp_result.txt; then
+    red "✖ 密码保存失败！可能是密码过短（要求最少6位）或不符合安全要求。"
+  else
+    red "✖ 执行异常，请确保 Chatwoot 容器正在运行 (可通过选项 2 查看状态)。"
+  fi
+  rm -f tmp_result.txt
+  
+  echo ""
+  read -n 1 -s -r -p "按任意键返回主菜单..."
+}
+
 install_ftp(){
   clear
   echo -e "\033[32m📂 FTP/SFTP 备份工具...\033[0m"
@@ -555,11 +623,12 @@ show_menu() {
     echo "5) 💾  手动备份"
     echo "6) ⏪  恢复备份"
     echo "7) ⏱️  定时备份"
-    echo "8) 📂  FTP/SFTP 备份工具"
-    echo "9) 🧹  卸载 Chatwoot"
+    echo "8) 🔓  强制激活客服"
+    echo "9) 📂  FTP/SFTP 备份工具"
+    echo "10) 🧹 卸载 Chatwoot"
     echo "0) ❌  退出"
     echo ""
-    read -rp "请选择 [0-9]： " CHOICE
+    read -rp "请选择 [0-10]： " CHOICE
 
     case "$CHOICE" in
       1) install_or_update ;;
@@ -569,8 +638,9 @@ show_menu() {
       5) do_backup ;;
       6) restore_backup ;;
       7) setup_auto_backup ;;
-      8) install_ftp ;;
-      9) uninstall_all ;;
+      8) skip_user_verification ;;
+      9) install_ftp ;;
+      10) uninstall_all ;;
       0) exit 0 ;;
       *) yellow "⚠ 无效选择，请重试" ;;
     esac
