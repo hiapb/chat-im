@@ -529,16 +529,21 @@ show_menu() {
   while true; do
     echo
     green "========= Chatwoot 管理菜单 ========="
+    echo ""
     echo "1) 🌍 安装 Chatwoot"
+    echo ""
     echo "2) 📊 查看状态"
     echo "3) 🔄 重启服务"
     echo "4) ⬆️ 更新 Chatwoot"
+    echo ""
     echo "5) 💾 手动备份"
     echo "6) ⏪ 恢复备份"
     echo "7) ⏱️ 定时备份"
     echo "8) 📂 FTP/SFTP 备份工具"
+    echo ""
     echo "9) 🧹 卸载 Chatwoot"
     echo "0) ❌ 退出"
+    echo ""
     read -rp "请选择 [0-9]： " CHOICE
 
     case "$CHOICE" in
