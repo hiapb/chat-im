@@ -256,6 +256,41 @@ restart_service() {
 }
 
 ########################################
+# 更新 Chatwoot
+########################################
+
+update_chatwoot() {
+  if [ ! -d "$INSTALL_DIR" ]; then
+    red "✖ Chatwoot 未安装，无法执行更新"
+    return
+  fi
+
+  yellow "⚠ 即将开始更新 Chatwoot 最新版本..."
+  yellow "【重要提醒】在执行更新前，强烈建议您已做好数据备份！"
+  read -rp "❓ 确认继续执行更新流程？[y/N]： " CONFIRM
+
+  case "$CONFIRM" in
+    y|Y) ;;
+    *) yellow "⚠ 为了数据安全，已取消更新"; return ;;
+  esac
+
+  cd "$INSTALL_DIR"
+  ensure_dependencies
+
+  blue "⬇ 正在从 Docker Hub 拉取最新镜像..."
+  $DOCKER_COMPOSE_CMD pull
+
+  blue "🔄 正在执行数据库迁移与结构同步 (db:chatwoot_prepare)..."
+  $DOCKER_COMPOSE_CMD run --rm chatwoot bundle exec rails db:chatwoot_prepare
+
+  blue "🚀 正在重启系统以应用最新版本..."
+  $DOCKER_COMPOSE_CMD down
+  $DOCKER_COMPOSE_CMD up -d
+
+  green "✔ Chatwoot 更新已顺利完成！"
+}
+
+########################################
 # 卸载 Chatwoot
 ########################################
 
@@ -300,17 +335,19 @@ show_menu() {
     echo "1) 🌍 安装 Chatwoot"
     echo "2) 📊 查看状态"
     echo "3) 🔄 重启服务"
-    echo "4) 🧹 卸载 Chatwoot"
-    echo "5) ❌ 退出"
-    read -rp "请选择 [1-5]： " CHOICE
+    echo "4) ⬆️ 更新 Chatwoot"
+    echo "5) 🧹 卸载 Chatwoot"
+    echo "6) ❌ 退出"
+    read -rp "请选择 [1-6]： " CHOICE
 
     case "$CHOICE" in
       1) install_or_update ;;
       2) show_status ;;
       3) restart_service ;;
-      4) uninstall_all ;;
-      5) exit 0 ;;
-      *) yellow "⚠ 无效选择，请重试" ;;
+      4) update_chatwoot ;;
+      5) uninstall_all ;;
+      6) exit 0 ;;
+      *) yellow "⚠ 无效选择，请重新输入" ;;
     esac
   done
 }
