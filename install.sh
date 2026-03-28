@@ -3,6 +3,7 @@
 # hia Chatwoot 一键管理脚本 v5.0
 # 自动安装 Docker、Compose、OpenSSL
 # 深度集成：平滑更新、零宕机热备、跨机恢复、独立定时器与 FTP 异地链路
+# 已追加：永久关闭 widget 相关 Rack::Attack 限制
 
 set -e
 
@@ -104,6 +105,21 @@ ensure_dependencies() {
 }
 
 ########################################
+# 永久关闭 Widget Rack::Attack
+########################################
+
+ensure_widget_rack_attack_disabled() {
+  mkdir -p "$INSTALL_DIR"
+  touch "$ENV_FILE"
+
+  if ! grep -q '^ENABLE_RACK_ATTACK_WIDGET_API=' "$ENV_FILE"; then
+    echo 'ENABLE_RACK_ATTACK_WIDGET_API=false' >> "$ENV_FILE"
+  else
+    sed -i 's/^ENABLE_RACK_ATTACK_WIDGET_API=.*/ENABLE_RACK_ATTACK_WIDGET_API=false/' "$ENV_FILE"
+  fi
+}
+
+########################################
 # 创建配置文件
 ########################################
 
@@ -143,6 +159,7 @@ POSTGRES_PASSWORD=$PG_PASS
 POSTGRES_DATABASE=chatwoot
 REDIS_URL=redis://redis:6379
 REDIS_PASSWORD=$REDIS_PASS
+ENABLE_RACK_ATTACK_WIDGET_API=false
 EOF
 
   echo "$PORT" > "$INSTALL_DIR/.port"
@@ -211,6 +228,7 @@ install_or_update() {
   cd "$INSTALL_DIR"
 
   [ -f "$ENV_FILE" ] || create_env
+  ensure_widget_rack_attack_disabled
   create_compose
 
   if [ ! -d "$INSTALL_DIR/data/postgres" ]; then
@@ -227,6 +245,7 @@ install_or_update() {
   green "✔ Chatwoot 已成功启动"
   echo "🌍 服务器访问地址：http://${IP}:${PORT}"
   echo "🔗 反代恢复域名：https://${DOMAIN}"
+  echo "🛡 Widget Rack::Attack 已永久关闭"
 }
 
 show_status() {
@@ -246,6 +265,7 @@ restart_service() {
   fi
   cd "$INSTALL_DIR"
   ensure_dependencies
+  ensure_widget_rack_attack_disabled
   $DOCKER_COMPOSE_CMD down
   $DOCKER_COMPOSE_CMD up -d
   green "✔ Chatwoot 服务已重启"
@@ -268,6 +288,7 @@ update_chatwoot() {
 
   cd "$INSTALL_DIR"
   ensure_dependencies
+  ensure_widget_rack_attack_disabled
 
   blue "⬇ 正在从 Docker Hub 拉取最新镜像..."
   $DOCKER_COMPOSE_CMD pull
@@ -280,6 +301,7 @@ update_chatwoot() {
   $DOCKER_COMPOSE_CMD up -d
 
   green "✔ Chatwoot 更新已顺利完成！"
+  green "🛡 Widget Rack::Attack 关闭状态已保留"
 }
 
 ########################################
@@ -300,7 +322,6 @@ do_backup() {
   blue "🔄 开始执行手动备份..."
   cd "$INSTALL_DIR" || return
   
-  # 逻辑备份保证数据一致性，防止直接打包物理文件导致的损坏
   if $DOCKER_COMPOSE_CMD ps | grep -q postgres; then
       blue "📦 正在导出数据库结构..."
       $DOCKER_COMPOSE_CMD exec -T postgres pg_dump -U chatwoot chatwoot > ./data/chatwoot_logical_dump.sql || yellow "⚠ 数据库导出警告，尝试继续文件备份"
@@ -314,7 +335,6 @@ do_backup() {
   
   tar -czf "$BACKUP_FILE" $TARGET_FILES
   
-  # 仅保留最近 3 份快照
   cd "$BACKUP_DIR" || return
   ls -t chatwoot_backup_*.tar.gz 2>/dev/null | awk 'NR>3' | xargs -I {} rm -f {}
   
@@ -363,7 +383,7 @@ restore_backup() {
   blue "📦 正在解压备份数据..."
   tar -xzf "$BACKUP_PATH" -C "$INSTALL_DIR" || { red "✖ 解压失败，备份包可能损坏。"; return; }
   
-  cd "$INSTALL_DIR" && ensure_dependencies
+  cd "$INSTALL_DIR" && ensure_dependencies && ensure_widget_rack_attack_disabled
   
   blue "🚀 正在重新启动服务..."
   $DOCKER_COMPOSE_CMD up -d || { red "✖ 启动失败，请检查配置。"; return; }
@@ -455,7 +475,6 @@ TARGET_FILES=\$(ls -A | grep -E 'docker-compose.yml|\.env|\.port|\.domain|data' 
 if [[ -n "\$TARGET_FILES" ]]; then
     tar -czf "\$BACKUP_FILE" \$TARGET_FILES
     cd "\$BACKUP_DIR" || exit 1
-    # 仅保留最近 3 份
     ls -t chatwoot_backup_*.tar.gz 2>/dev/null | awk 'NR>3' | xargs -I {} rm -f {}
 fi
 EOF
@@ -510,7 +529,6 @@ uninstall_all() {
 
   rm -rf "$INSTALL_DIR"
 
-  # 清理定时备份任务
   local TMP_CRON="$(mktemp)"
   crontab -l 2>/dev/null | sed "/^${CRON_TAG_BEGIN}$/,/^${CRON_TAG_END}$/d" > "$TMP_CRON" || true
   crontab "$TMP_CRON" 2>/dev/null || true
